@@ -6,6 +6,27 @@
 
 ---
 
+## 0. What Is Loom? (orientation for new readers)
+
+Loom turns a Meta Quest 3 into a wireless monitor-plus-input-station for a Linux or macOS machine. The host creates a *virtual* display — a monitor that exists only in software — so the streamed screen is an *additional* workspace rather than a mirror of a physical one. The headset shows it as a large curved screen floating in space, readable enough for real work; a controller is the mouse, and a Bluetooth keyboard paired to the Quest types into the host.
+
+**Why build it when Virtual Desktop and Immersed exist?** Those are closed-source, Windows-first, and shaped around gaming or their own SaaS. Loom is: open, Linux (KDE/Wayland) and macOS as first-class hosts, personal-infrastructure-scale (one user, a handful of paired devices, no accounts, no relay servers), and built spec-first so the protocol outlives any one implementation. It is also deliberately a *productivity* streamer, not a game streamer — which changes the engineering: text clarity and input latency dominate; controller-pose streaming and 500 Mbps bitrates do not.
+
+**Design philosophy, in five commitments:**
+1. **Freshness over completeness** — a late frame is worth less than a dropped one; see PROTOCOL.md §0 for how far this is taken.
+2. **Spec-first, twice-implemented** — the wire protocol has one normative document and two independent implementations (Rust host, C++ client) kept in agreement by executable conformance vectors, never by shared code.
+3. **Boring technology at the edges** — GLES over Vulkan, HEVC before AV1, CSV keymap tables, POSIX sh scripts. Novelty is spent only where it buys latency.
+4. **The compositor does the work** — on the Quest, video lands in an OpenXR composition layer so Meta's compositor handles reprojection and filtering; head-tracking smoothness is therefore independent of stream health.
+5. **Personal-scale trust** — a 6-digit PIN pairs devices once (PAKE-protected, see PAIRING.md); thereafter, pinned certificates. No CA, no cloud, no account.
+
+**Life of a frame.** You click; the click was injected 10 ms ago and the app repaints → KWin (or the macOS WindowServer) composites the virtual display → the frame surfaces in the capture path (EVDI grab or PipeWire dmabuf on Linux; ScreenCaptureKit IOSurface on macOS) → the hardware encoder (NVENC / VideoToolbox) turns it into a small HEVC P-frame referencing only its predecessor → `loomd` prefixes the capture timestamp, fragments it into ≤1350-byte datagrams, and fires them over QUIC → the Quest client reassembles, validates the chain, and hands the access unit straight to MediaCodec (no jitter buffer) → the decoded image lands, zero-copy, in the cylinder layer's swapchain → Meta's compositor samples it at display resolution for the next 72 Hz vsync. Total budget: ≤45 ms, itemized in §10. If any datagram died en route, the frame is discarded, the previous image persists on screen, and an IDR_REQUEST goes back up the control stream — recovery takes one round trip plus one keyframe.
+
+**Life of a keypress** runs the other way and is much simpler: Quest's input queue → AKEYCODE→evdev translation (tables in the spec repo) → CBOR INPUT event on the reliable control stream → host injection (portal RemoteDesktop / CGEventPost), with the host's own keyboard layout applied. Reliable transport is correct here: losing a keystroke is worse than a keystroke arriving 15 ms late.
+
+**How the documents fit together:** this file records the *decisions and structure* (informative); PROTOCOL.md and PAIRING.md are the *contract* (normative — they win over anything here); VECTORS.md defines the *executable form* of that contract; GLOSSARY.md defines the *vocabulary*. A newcomer should read this §0, then GLOSSARY.md as needed, then PROTOCOL.md §0–§1, and only then the rest.
+
+---
+
 ## 1. Goal & Non-Goals
 
 **Goal:** Stream a *virtual* (headless) desktop display from a Linux or macOS host to a Meta Quest 3 over LAN WiFi, rendered as a curved screen in-headset, with mouse (controller ray) and keyboard (Quest Bluetooth keyboard) input flowing back. Target motion-to-photon comfortable for productivity: text must be readable, cursor latency must feel direct.
@@ -131,8 +152,6 @@ EVDI virtual display → PipeWire (xdg-desktop-portal ScreenCast, dmabuf)
 ```
 
 * **Virtual display:** EVDI kernel module (the DisplayLink driver). `loom-vdisplay` opens `/dev/dri/evdi*`, adds a device with our 2560×1440@72 EDID, and KWin picks it up as a real monitor. This is the compositor-agnostic route. **Open risk (R1):** KWin's handling of EVDI hotplug and whether the portal exposes it cleanly must be validated in week 1 — it is the single biggest Linux unknown. Fallback A: capture a physical monitor (feature degradation, pipeline unchanged). Fallback B: KWin-specific virtual output API if Plasma ships one.
-
-  **Alternative capture (libevdi direct-grab):** libevdi can hand the rendered framebuffer straight to userspace — this is how DisplayLink monitors work — so on Linux `loom-vdisplay` and `loom-capture` MAY collapse into a single libevdi-based module: no PipeWire, no portal permission dialog, and risk R2 does not apply to this path. Trade-off: evdi grabs land in system RAM, costing an extra GPU→RAM→GPU round-trip before NVENC — ~1.1 GB/s worst case at 1440p72, but far less in practice since evdi transfers are damage-based (only changed regions), i.e. roughly 2–5 % of one core; the portal path is potentially zero-copy dmabuf but carries R2. The open question for the spike is latency *consistency*: whether KWin flushes damage to evdi promptly or batches it. The Rust `evdi` crate (0.8.0, 2023) exists but may need forking or a direct bindgen against current libevdi.
 * **Capture:** `ashpd` crate for the portal, `pipewire-rs` for the stream. Request dmabuf; **open risk (R2):** NVIDIA + PipeWire dmabuf modifier negotiation is historically temperamental. Fallback: SHM buffer path (adds one copy, costs ~2–3 ms — acceptable, not preferred).
 * **Encode:** NVENC via FFI (`nvidia-video-codec` headers; consider the `cudarc` + raw NVENC route rather than FFmpeg to keep control of latency knobs). Registered CUDA/GL resources for zero-copy from the dmabuf import.
 * **Input injection:** xdg-desktop-portal **RemoteDesktop** interface (KDE implements it) — this is the Wayland-correct path and pairs with the ScreenCast session so coordinates land on the right output. Fallback: `uinput` (works, but absolute-pointer mapping to a specific output is messier).
@@ -146,7 +165,7 @@ CGVirtualDisplay → ScreenCaptureKit (IOSurface)
   → quinn datagrams
 ```
 
-* **Virtual display:** `CGVirtualDisplay` (private but stable API; used by BetterDisplay/Deskreen). Implement as a ~100-line Objective-C shim exposing a C API (`vd_create`/`vd_destroy`), compiled via `build.rs` + `cc`. Reference implementations to study: `tml1024/FluffyDisplay` (Swift, canonical) and `KhaosT/CGVirtualDisplay` (header dump); recent third-party projects confirm the API still works on current macOS. HiDPI mode: advertise 2560×1440 backed by a 2560×1440 framebuffer in v1 (a 5120×2880 HiDPI virtual display is a v2 experiment — quadruples encode cost).
+* **Virtual display:** `CGVirtualDisplay` (private but stable API; used by BetterDisplay/Deskreen). Bind via `objc2`. HiDPI mode: advertise 2560×1440 backed by a 2560×1440 framebuffer in v1 (a 5120×2880 HiDPI virtual display is a v2 experiment — quadruples encode cost).
 * **Capture:** ScreenCaptureKit filtered to the virtual display, `objc2-screen-capture-kit`. Zero-copy IOSurface → VideoToolbox.
 * **Encode:** VideoToolbox with `kVTVideoEncoderSpecification_EnableLowLatencyRateControl`, single reference, `AllowFrameReordering=false`.
 * **Input injection:** `CGEventPost` (needs Accessibility permission — document in README). evdev→CGKeyCode static table lives in `loom-input/src/macos/keymap.rs` and mirrors a table in the spec so the C++ side can test against it.
@@ -261,8 +280,8 @@ Every stage must be instrumented from day one (§12); budgets are verified, not 
 
 | # | Risk | Probe | Fallback |
 |---|---|---|---|
-| R1 | EVDI virtual display under KWin Wayland (hotplug, portal visibility) | M0 spike — EVDI under KWin: validate hotplug AND compare capture via libevdi direct-grab vs portal ScreenCast of the EVDI output — measure latency consistency, end-to-end delay, and CPU for both | Physical-monitor capture; KWin virtual-output API if available |
-| R2 | NVIDIA + PipeWire dmabuf modifiers (applies only if the portal path is chosen over libevdi direct-grab) | M0 spike | SHM capture path (+2–3 ms) |
+| R1 | EVDI virtual display under KWin Wayland (hotplug, portal visibility) | M0 spike | Physical-monitor capture; KWin virtual-output API if available |
+| R2 | NVIDIA + PipeWire dmabuf modifiers | M0 spike | SHM capture path (+2–3 ms) |
 | R3 | msquic Android arm64 build | M0 spike | quiche (C API) as substitute — protocol layer must not leak msquic types |
 | R4 | CGVirtualDisplay private-API breakage on macOS updates | ongoing | Pin known-good macOS versions; BetterDisplay community tracks breakage fast |
 | R5 | MediaCodec low-latency flag ignored / extra frame buffered on some Quest firmware | M3 | `vendor.qti` low-latency keys; measure, don't trust |

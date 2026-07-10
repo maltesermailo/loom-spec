@@ -7,6 +7,24 @@ The key words MUST, MUST NOT, SHOULD, SHOULD NOT, and MAY are to be interpreted 
 
 ---
 
+## 0. Background & Design Rationale (non-normative)
+
+*This section explains why the protocol looks the way it does. Nothing in it is binding; when it and the normative sections disagree, the normative text wins. Unfamiliar terms (IDR, GOP, datagram, jitter, PAKE, …) are defined in GLOSSARY.md.*
+
+**The problem.** Carry a live desktop — video, audio, and return-path input — from a PC to a headset over consumer WiFi, with latency low enough that moving the mouse feels direct (a ~45 ms click-to-photon budget) and reliability good enough for multi-hour sessions. WiFi is the adversary here: it loses packets in bursts, delays them unpredictably, and changes character when a microwave turns on. The protocol's job is to degrade *gracefully and briefly* under those conditions rather than to pretend they don't happen.
+
+**Freshness over completeness.** The single organizing principle: a late frame is worth less than a dropped one. A desktop is a live view of current state, not a movie — nobody wants to watch a faithful replay of 300 ms ago. Almost every distinctive choice follows from this: media rides unreliable datagrams (a retransmitted frame would arrive stale), there is no video jitter buffer (§6.4 delivers to the decoder immediately), the encoder drops rather than queues when it falls behind (§5.6), and the reassembly window holds only two frames (§6.2).
+
+**Why QUIC.** One connection, four properties Loom needs: (1) *unreliable datagrams* (RFC 9221) for media, avoiding TCP's head-of-line blocking where one lost packet stalls everything behind it; (2) a *reliable stream* alongside, for the control messages that genuinely must all arrive in order; (3) *TLS built into the handshake*, which the pairing model (PAIRING.md) leans on directly; (4) *connection migration*, so the headset roaming between access points doesn't drop the session. The alternative stacks each lose one of these: plain UDP means reinventing the control channel and crypto; TCP means HOL blocking; WebRTC brings a negotiation apparatus (SDP, ICE) built for browser peer-to-peer that a two-party LAN protocol doesn't need.
+
+**The recovery model in one paragraph.** The encoder produces a chain: one IDR (self-contained picture), then P-frames that each reference only the frame immediately before (§5.3). Chain intact → everything decodes. Any link lost → everything after it is undecodable until the next IDR — so the client discards, freezes on the last good frame, and sends IDR_REQUEST (§3.6); the host answers with a fresh IDR and the chain restarts. That's the *entire* failure model. No FEC, no retransmission, no partial-corruption cases — because the constraints in §5 (no B-frames, single reference, infinite GOP) were chosen precisely so that "broken until next IDR" is a complete description of every possible loss. Simplicity here is not laziness; it is what makes two independent implementations likely to agree.
+
+**Why the control channel is CBOR with integer keys.** Binary (input events flow at up to 200 Hz), self-describing (unknown fields skippable — the forward-compatibility rules of §3.2 depend on this), canonical form available (byte-exact conformance vectors need one true encoding), and trivially implementable in both Rust and C++ without a schema compiler in the build.
+
+**What is deliberately absent from v1** — each with its designated path in: FEC (header flag bit reserved, §4), sliced/overlapped encoding (fragment framing already supports it, §5.5), more streams such as a cursor plane or second display (stream_id space + feature bits, §12), AV1 (codec negotiation, §3.4), and WAN operation (out of scope entirely; the trust model in PAIRING.md is LAN-shaped).
+
+---
+
 ## 1. Overview
 
 Loom streams a virtual desktop (video + audio) from a **host** to a **client** and carries input events from client to host. All traffic flows over a single QUIC connection:
@@ -237,6 +255,8 @@ An Opus frame that would exceed the size limit is a host encoder misconfiguratio
 ---
 
 ## 6. Client Receive Model (normative)
+
+*Rationale (non-normative): these rules exist so that both implementations make identical decisions about ambiguous arrival patterns — late frames, duplicates, interleaved fragments. Every rule is exercised by `vectors/reassembly/`; when prose and vectors seem to disagree, that is a bug to raise, not to route around. Note one subtlety the vectors pinned down: completing a frame advances `newest_complete` even when the frame is then gap-discarded, which can render an earlier, still-incomplete frame stale — correct, because delivering it would be useless once its successor's data is gone.*
 
 Per video frame_seq the client reassembles fragments into a frame body. Rules:
 
