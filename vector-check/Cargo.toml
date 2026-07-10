@@ -1,0 +1,22 @@
+# vector-check is a standalone tool, deliberately NOT part of any Cargo
+# workspace (the empty [workspace] table below stops an ancestor manifest from
+# absorbing it). It feeds each vector file to an implementation's adapter
+# binary over stdin/stdout and deep-compares results against the vectors.
+[package]
+name = "vector-check"
+version = "0.1.0"
+edition = "2021"
+description = "Conformance harness: drives a Loom protocol adapter against spec vectors"
+
+[workspace]
+
+[[bin]]
+name = "vector-check"
+path = "src/main.rs"
+
+[[bin]]
+name = "fake_adapter"
+path = "src/bin/fake_adapter.rs"
+
+[dependencies]
+serde_json = "1"

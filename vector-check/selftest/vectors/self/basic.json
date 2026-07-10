@@ -1,0 +1,30 @@
+{
+ "category": "self",
+ "name": "basic",
+ "note": "Fixture for the harness self-test. Exercises integers, large integers, floats, nested arrays/objects, $hex byte strings, and note-key ignoring. Not a Loom protocol category.",
+ "cases": [
+  {
+   "label": "integers_and_note",
+   "op": "noop",
+   "input": {},
+   "expected": { "a": 1, "big": 4294967295, "neg": -240, "note": "this note MUST be ignored" }
+  },
+  {
+   "label": "float_tolerance",
+   "op": "noop",
+   "input": {},
+   "expected": { "jitter": 2.5 }
+  },
+  {
+   "label": "nested_and_hex",
+   "op": "noop",
+   "input": {},
+   "expected": {
+    "arr": [1, 2, { "x": true, "note": "ignored too" }],
+    "hex": { "$hex": "00ff" },
+    "ok": true,
+    "reason": null
+   }
+  }
+ ]
+}
