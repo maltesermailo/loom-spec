@@ -1,0 +1,159 @@
+{
+ "category": "keymap",
+ "name": "tables",
+ "note": "Round-trips against keymaps/*.csv. Tables are STARTER sets from memory and MUST be verified against the platform headers before the spec repo is tagged; the vectors are regenerated from the CSVs by generate.py, so fixing the CSV fixes the vectors.",
+ "cases": [
+  {
+   "label": "ak2ev_letter_a",
+   "op": "akeycode_to_evdev",
+   "input": {
+    "code": 29
+   },
+   "expected": {
+    "code": 30
+   }
+  },
+  {
+   "label": "ak2ev_digit_0",
+   "op": "akeycode_to_evdev",
+   "input": {
+    "code": 7
+   },
+   "expected": {
+    "code": 11
+   }
+  },
+  {
+   "label": "ak2ev_enter",
+   "op": "akeycode_to_evdev",
+   "input": {
+    "code": 66
+   },
+   "expected": {
+    "code": 28
+   }
+  },
+  {
+   "label": "ak2ev_shift_left",
+   "op": "akeycode_to_evdev",
+   "input": {
+    "code": 59
+   },
+   "expected": {
+    "code": 42
+   }
+  },
+  {
+   "label": "ak2ev_meta_left",
+   "op": "akeycode_to_evdev",
+   "input": {
+    "code": 117
+   },
+   "expected": {
+    "code": 125
+   }
+  },
+  {
+   "label": "ak2ev_dpad_up",
+   "op": "akeycode_to_evdev",
+   "input": {
+    "code": 19
+   },
+   "expected": {
+    "code": 103
+   }
+  },
+  {
+   "label": "ak2ev_f12",
+   "op": "akeycode_to_evdev",
+   "input": {
+    "code": 142
+   },
+   "expected": {
+    "code": 88
+   }
+  },
+  {
+   "label": "ak2ev_unmapped",
+   "op": "akeycode_to_evdev",
+   "input": {
+    "code": 999
+   },
+   "expected": {
+    "code": null,
+    "note": "unmapped keys MUST be swallowed client-side, never sent"
+   }
+  },
+  {
+   "label": "ev2cg_letter_a",
+   "op": "evdev_to_cgkeycode",
+   "input": {
+    "code": 30
+   },
+   "expected": {
+    "code": 0
+   }
+  },
+  {
+   "label": "ev2cg_return",
+   "op": "evdev_to_cgkeycode",
+   "input": {
+    "code": 28
+   },
+   "expected": {
+    "code": 36
+   }
+  },
+  {
+   "label": "ev2cg_space",
+   "op": "evdev_to_cgkeycode",
+   "input": {
+    "code": 57
+   },
+   "expected": {
+    "code": 49
+   }
+  },
+  {
+   "label": "ev2cg_cmd",
+   "op": "evdev_to_cgkeycode",
+   "input": {
+    "code": 125
+   },
+   "expected": {
+    "code": 55
+   }
+  },
+  {
+   "label": "ev2cg_up_arrow",
+   "op": "evdev_to_cgkeycode",
+   "input": {
+    "code": 103
+   },
+   "expected": {
+    "code": 126
+   }
+  },
+  {
+   "label": "ev2cg_f12",
+   "op": "evdev_to_cgkeycode",
+   "input": {
+    "code": 88
+   },
+   "expected": {
+    "code": 111
+   }
+  },
+  {
+   "label": "ev2cg_unmapped",
+   "op": "evdev_to_cgkeycode",
+   "input": {
+    "code": 240
+   },
+   "expected": {
+    "code": null,
+    "note": "host MUST silently drop uninjectable keys (\u00a73.5)"
+   }
+  }
+ ]
+}

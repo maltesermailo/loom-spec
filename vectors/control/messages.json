@@ -1,0 +1,678 @@
+{
+ "category": "control",
+ "name": "messages",
+ "note": "\u00a73. Encode expectations are canonical CBOR (RFC 8949 \u00a74.2.1): definite lengths, shortest-form ints, bytewise-sorted keys. Decode MUST accept any valid CBOR. Envelope violations are PROTOCOL_VIOLATION; unknown types/keys are ignored.",
+ "cases": [
+  {
+   "label": "hello",
+   "op": "encode",
+   "input": {
+    "msg_type": 1,
+    "body": {
+     "0": 1,
+     "1": "Quest 3",
+     "2": [
+      1,
+      2
+     ],
+     "3": [
+      3072,
+      3216
+     ],
+     "4": 90,
+     "5": 1
+    }
+   },
+   "expected": {
+    "hex": "0000001f8201a60001016751756573742033028201020382190c00190c9004185a0501"
+   }
+  },
+  {
+   "label": "hello_decode",
+   "op": "decode",
+   "input": {
+    "hex": "0000001f8201a60001016751756573742033028201020382190c00190c9004185a0501"
+   },
+   "expected": {
+    "ok": true,
+    "msg_type": 1,
+    "body": {
+     "0": 1,
+     "1": "Quest 3",
+     "2": [
+      1,
+      2
+     ],
+     "3": [
+      3072,
+      3216
+     ],
+     "4": 90,
+     "5": 1
+    }
+   }
+  },
+  {
+   "label": "welcome",
+   "op": "encode",
+   "input": {
+    "msg_type": 2,
+    "body": {
+     "0": 1,
+     "1": "studio",
+     "2": {
+      "$hex": "000102030405060708090a0b0c0d0e0f"
+     }
+    }
+   },
+   "expected": {
+    "hex": "0000001f8202a30001016673747564696f0250000102030405060708090a0b0c0d0e0f"
+   }
+  },
+  {
+   "label": "welcome_decode",
+   "op": "decode",
+   "input": {
+    "hex": "0000001f8202a30001016673747564696f0250000102030405060708090a0b0c0d0e0f"
+   },
+   "expected": {
+    "ok": true,
+    "msg_type": 2,
+    "body": {
+     "0": 1,
+     "1": "studio",
+     "2": {
+      "$hex": "000102030405060708090a0b0c0d0e0f"
+     }
+    }
+   }
+  },
+  {
+   "label": "config",
+   "op": "encode",
+   "input": {
+    "msg_type": 3,
+    "body": {
+     "0": 1,
+     "1": 1,
+     "2": [
+      2560,
+      1440
+     ],
+     "3": 72,
+     "4": 1,
+     "5": 60000
+    }
+   },
+   "expected": {
+    "hex": "000000188203a6000101010282190a001905a003184804010519ea60"
+   }
+  },
+  {
+   "label": "config_decode",
+   "op": "decode",
+   "input": {
+    "hex": "000000188203a6000101010282190a001905a003184804010519ea60"
+   },
+   "expected": {
+    "ok": true,
+    "msg_type": 3,
+    "body": {
+     "0": 1,
+     "1": 1,
+     "2": [
+      2560,
+      1440
+     ],
+     "3": 72,
+     "4": 1,
+     "5": 60000
+    }
+   }
+  },
+  {
+   "label": "config_ack",
+   "op": "encode",
+   "input": {
+    "msg_type": 4,
+    "body": {
+     "0": 1
+    }
+   },
+   "expected": {
+    "hex": "000000058204a10001"
+   }
+  },
+  {
+   "label": "config_ack_decode",
+   "op": "decode",
+   "input": {
+    "hex": "000000058204a10001"
+   },
+   "expected": {
+    "ok": true,
+    "msg_type": 4,
+    "body": {
+     "0": 1
+    }
+   }
+  },
+  {
+   "label": "start",
+   "op": "encode",
+   "input": {
+    "msg_type": 5,
+    "body": {}
+   },
+   "expected": {
+    "hex": "000000038205a0"
+   }
+  },
+  {
+   "label": "start_decode",
+   "op": "decode",
+   "input": {
+    "hex": "000000038205a0"
+   },
+   "expected": {
+    "ok": true,
+    "msg_type": 5,
+    "body": {}
+   }
+  },
+  {
+   "label": "input_batch",
+   "op": "encode",
+   "input": {
+    "msg_type": 16,
+    "body": {
+     "0": [
+      [
+       0,
+       32768,
+       21845
+      ],
+      [
+       1,
+       0,
+       true
+      ],
+      [
+       2,
+       0,
+       -240
+      ],
+      [
+       3,
+       30,
+       true
+      ],
+      [
+       3,
+       30,
+       false
+      ]
+     ]
+    }
+   },
+   "expected": {
+    "hex": "000000208210a100858300198000195555830100f583020038ef8303181ef58303181ef4"
+   }
+  },
+  {
+   "label": "input_batch_decode",
+   "op": "decode",
+   "input": {
+    "hex": "000000208210a100858300198000195555830100f583020038ef8303181ef58303181ef4"
+   },
+   "expected": {
+    "ok": true,
+    "msg_type": 16,
+    "body": {
+     "0": [
+      [
+       0,
+       32768,
+       21845
+      ],
+      [
+       1,
+       0,
+       true
+      ],
+      [
+       2,
+       0,
+       -240
+      ],
+      [
+       3,
+       30,
+       true
+      ],
+      [
+       3,
+       30,
+       false
+      ]
+     ]
+    }
+   }
+  },
+  {
+   "label": "idr_request",
+   "op": "encode",
+   "input": {
+    "msg_type": 32,
+    "body": {
+     "0": 1041
+    }
+   },
+   "expected": {
+    "hex": "00000008821820a100190411"
+   }
+  },
+  {
+   "label": "idr_request_decode",
+   "op": "decode",
+   "input": {
+    "hex": "00000008821820a100190411"
+   },
+   "expected": {
+    "ok": true,
+    "msg_type": 32,
+    "body": {
+     "0": 1041
+    }
+   }
+  },
+  {
+   "label": "stats",
+   "op": "encode",
+   "input": {
+    "msg_type": 33,
+    "body": {
+     "0": 72,
+     "1": 1,
+     "2": 3110,
+     "3": 2.5,
+     "4": 5400,
+     "5": 6200,
+     "6": 31000
+    }
+   },
+   "expected": {
+    "hex": "0000001d821821a7001848010102190c2603f94100041915180519183806197918"
+   }
+  },
+  {
+   "label": "stats_decode",
+   "op": "decode",
+   "input": {
+    "hex": "0000001d821821a7001848010102190c2603f94100041915180519183806197918"
+   },
+   "expected": {
+    "ok": true,
+    "msg_type": 33,
+    "body": {
+     "0": 72,
+     "1": 1,
+     "2": 3110,
+     "3": 2.5,
+     "4": 5400,
+     "5": 6200,
+     "6": 31000
+    }
+   }
+  },
+  {
+   "label": "clock_ping",
+   "op": "encode",
+   "input": {
+    "msg_type": 48,
+    "body": {
+     "0": 1000000
+    }
+   },
+   "expected": {
+    "hex": "0000000a821830a1001a000f4240"
+   }
+  },
+  {
+   "label": "clock_ping_decode",
+   "op": "decode",
+   "input": {
+    "hex": "0000000a821830a1001a000f4240"
+   },
+   "expected": {
+    "ok": true,
+    "msg_type": 48,
+    "body": {
+     "0": 1000000
+    }
+   }
+  },
+  {
+   "label": "clock_pong",
+   "op": "encode",
+   "input": {
+    "msg_type": 49,
+    "body": {
+     "0": 1000000,
+     "1": 5003100,
+     "2": 5003180
+    }
+   },
+   "expected": {
+    "hex": "00000016821831a3001a000f4240011a004c575c021a004c57ac"
+   }
+  },
+  {
+   "label": "clock_pong_decode",
+   "op": "decode",
+   "input": {
+    "hex": "00000016821831a3001a000f4240011a004c575c021a004c57ac"
+   },
+   "expected": {
+    "ok": true,
+    "msg_type": 49,
+    "body": {
+     "0": 1000000,
+     "1": 5003100,
+     "2": 5003180
+    }
+   }
+  },
+  {
+   "label": "error_busy",
+   "op": "encode",
+   "input": {
+    "msg_type": 64,
+    "body": {
+     "0": 2,
+     "1": "session active"
+    }
+   },
+   "expected": {
+    "hex": "00000016821840a20002016e73657373696f6e20616374697665"
+   }
+  },
+  {
+   "label": "error_busy_decode",
+   "op": "decode",
+   "input": {
+    "hex": "00000016821840a20002016e73657373696f6e20616374697665"
+   },
+   "expected": {
+    "ok": true,
+    "msg_type": 64,
+    "body": {
+     "0": 2,
+     "1": "session active"
+    }
+   }
+  },
+  {
+   "label": "bye_user",
+   "op": "encode",
+   "input": {
+    "msg_type": 65,
+    "body": {
+     "0": 0
+    }
+   },
+   "expected": {
+    "hex": "00000006821841a10000"
+   }
+  },
+  {
+   "label": "bye_user_decode",
+   "op": "decode",
+   "input": {
+    "hex": "00000006821841a10000"
+   },
+   "expected": {
+    "ok": true,
+    "msg_type": 65,
+    "body": {
+     "0": 0
+    }
+   }
+  },
+  {
+   "label": "pair_a",
+   "op": "encode",
+   "input": {
+    "msg_type": 80,
+    "body": {
+     "0": {
+      "$hex": "a000000000000000000000000000000000000000000000000000000000000000"
+     }
+    }
+   },
+   "expected": {
+    "hex": "00000027821850a1005820a000000000000000000000000000000000000000000000000000000000000000"
+   }
+  },
+  {
+   "label": "pair_a_decode",
+   "op": "decode",
+   "input": {
+    "hex": "00000027821850a1005820a000000000000000000000000000000000000000000000000000000000000000"
+   },
+   "expected": {
+    "ok": true,
+    "msg_type": 80,
+    "body": {
+     "0": {
+      "$hex": "a000000000000000000000000000000000000000000000000000000000000000"
+     }
+    }
+   }
+  },
+  {
+   "label": "pair_b",
+   "op": "encode",
+   "input": {
+    "msg_type": 81,
+    "body": {
+     "0": {
+      "$hex": "b000000000000000000000000000000000000000000000000000000000000000"
+     },
+     "1": {
+      "$hex": "c000000000000000000000000000000000000000000000000000000000000000"
+     }
+    }
+   },
+   "expected": {
+    "hex": "0000004a821851a2005820b000000000000000000000000000000000000000000000000000000000000000015820c000000000000000000000000000000000000000000000000000000000000000"
+   }
+  },
+  {
+   "label": "pair_b_decode",
+   "op": "decode",
+   "input": {
+    "hex": "0000004a821851a2005820b000000000000000000000000000000000000000000000000000000000000000015820c000000000000000000000000000000000000000000000000000000000000000"
+   },
+   "expected": {
+    "ok": true,
+    "msg_type": 81,
+    "body": {
+     "0": {
+      "$hex": "b000000000000000000000000000000000000000000000000000000000000000"
+     },
+     "1": {
+      "$hex": "c000000000000000000000000000000000000000000000000000000000000000"
+     }
+    }
+   }
+  },
+  {
+   "label": "pair_c",
+   "op": "encode",
+   "input": {
+    "msg_type": 82,
+    "body": {
+     "0": {
+      "$hex": "c100000000000000000000000000000000000000000000000000000000000000"
+     }
+    }
+   },
+   "expected": {
+    "hex": "00000027821852a1005820c100000000000000000000000000000000000000000000000000000000000000"
+   }
+  },
+  {
+   "label": "pair_c_decode",
+   "op": "decode",
+   "input": {
+    "hex": "00000027821852a1005820c100000000000000000000000000000000000000000000000000000000000000"
+   },
+   "expected": {
+    "ok": true,
+    "msg_type": 82,
+    "body": {
+     "0": {
+      "$hex": "c100000000000000000000000000000000000000000000000000000000000000"
+     }
+    }
+   }
+  },
+  {
+   "label": "pair_result",
+   "op": "encode",
+   "input": {
+    "msg_type": 83,
+    "body": {
+     "0": true,
+     "1": 2
+    }
+   },
+   "expected": {
+    "hex": "00000008821853a200f50102"
+   }
+  },
+  {
+   "label": "pair_result_decode",
+   "op": "decode",
+   "input": {
+    "hex": "00000008821853a200f50102"
+   },
+   "expected": {
+    "ok": true,
+    "msg_type": 83,
+    "body": {
+     "0": true,
+     "1": 2
+    }
+   }
+  },
+  {
+   "label": "unknown_key_ignored",
+   "op": "decode",
+   "input": {
+    "hex": "000000218201a7000101617802810103821907801904380418480501186366667574757265"
+   },
+   "expected": {
+    "ok": true,
+    "msg_type": 1,
+    "body": {
+     "0": 1,
+     "1": "x",
+     "2": [
+      1
+     ],
+     "3": [
+      1920,
+      1080
+     ],
+     "4": 72,
+     "5": 1
+    },
+    "note": "key 99 dropped by parser"
+   }
+  },
+  {
+   "label": "unknown_msg_type_ignored",
+   "op": "decode",
+   "input": {
+    "hex": "0000000782187fa100187b"
+   },
+   "expected": {
+    "ok": true,
+    "ignored": true
+   }
+  },
+  {
+   "label": "noncanonical_accepted",
+   "op": "decode",
+   "input": {
+    "hex": "000000058204a10001"
+   },
+   "expected": {
+    "ok": true,
+    "msg_type": 4,
+    "body": {
+     "0": 1
+    },
+    "note": "receivers accept any valid CBOR, not only canonical"
+   }
+  },
+  {
+   "label": "envelope_not_array",
+   "op": "decode",
+   "input": {
+    "hex": "00000004a1616101"
+   },
+   "expected": {
+    "ok": false,
+    "error": "PROTOCOL_VIOLATION"
+   }
+  },
+  {
+   "label": "envelope_wrong_arity",
+   "op": "decode",
+   "input": {
+    "hex": "000000048301a003"
+   },
+   "expected": {
+    "ok": false,
+    "error": "PROTOCOL_VIOLATION"
+   }
+  },
+  {
+   "label": "body_not_map",
+   "op": "decode",
+   "input": {
+    "hex": "000000058205820102"
+   },
+   "expected": {
+    "ok": false,
+    "error": "PROTOCOL_VIOLATION"
+   }
+  },
+  {
+   "label": "truncated_cbor",
+   "op": "decode",
+   "input": {
+    "hex": "000000028205"
+   },
+   "expected": {
+    "ok": false,
+    "error": "PROTOCOL_VIOLATION"
+   }
+  },
+  {
+   "label": "frame_len_exceeds_limit",
+   "op": "decode",
+   "input": {
+    "hex": "00010001"
+   },
+   "expected": {
+    "ok": false,
+    "error": "PROTOCOL_VIOLATION",
+    "note": "length field alone is sufficient to reject"
+   }
+  }
+ ]
+}
