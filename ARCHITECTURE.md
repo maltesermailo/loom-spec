@@ -131,6 +131,8 @@ EVDI virtual display → PipeWire (xdg-desktop-portal ScreenCast, dmabuf)
 ```
 
 * **Virtual display:** EVDI kernel module (the DisplayLink driver). `loom-vdisplay` opens `/dev/dri/evdi*`, adds a device with our 2560×1440@72 EDID, and KWin picks it up as a real monitor. This is the compositor-agnostic route. **Open risk (R1):** KWin's handling of EVDI hotplug and whether the portal exposes it cleanly must be validated in week 1 — it is the single biggest Linux unknown. Fallback A: capture a physical monitor (feature degradation, pipeline unchanged). Fallback B: KWin-specific virtual output API if Plasma ships one.
+
+  **Alternative capture (libevdi direct-grab):** libevdi can hand the rendered framebuffer straight to userspace — this is how DisplayLink monitors work — so on Linux `loom-vdisplay` and `loom-capture` MAY collapse into a single libevdi-based module: no PipeWire, no portal permission dialog, and risk R2 does not apply to this path. Trade-off: evdi grabs land in system RAM, costing an extra GPU→RAM→GPU round-trip before NVENC — ~1.1 GB/s worst case at 1440p72, but far less in practice since evdi transfers are damage-based (only changed regions), i.e. roughly 2–5 % of one core; the portal path is potentially zero-copy dmabuf but carries R2. The open question for the spike is latency *consistency*: whether KWin flushes damage to evdi promptly or batches it. The Rust `evdi` crate (0.8.0, 2023) exists but may need forking or a direct bindgen against current libevdi.
 * **Capture:** `ashpd` crate for the portal, `pipewire-rs` for the stream. Request dmabuf; **open risk (R2):** NVIDIA + PipeWire dmabuf modifier negotiation is historically temperamental. Fallback: SHM buffer path (adds one copy, costs ~2–3 ms — acceptable, not preferred).
 * **Encode:** NVENC via FFI (`nvidia-video-codec` headers; consider the `cudarc` + raw NVENC route rather than FFmpeg to keep control of latency knobs). Registered CUDA/GL resources for zero-copy from the dmabuf import.
 * **Input injection:** xdg-desktop-portal **RemoteDesktop** interface (KDE implements it) — this is the Wayland-correct path and pairs with the ScreenCast session so coordinates land on the right output. Fallback: `uinput` (works, but absolute-pointer mapping to a specific output is messier).
@@ -144,7 +146,7 @@ CGVirtualDisplay → ScreenCaptureKit (IOSurface)
   → quinn datagrams
 ```
 
-* **Virtual display:** `CGVirtualDisplay` (private but stable API; used by BetterDisplay/Deskreen). Bind via `objc2`. HiDPI mode: advertise 2560×1440 backed by a 2560×1440 framebuffer in v1 (a 5120×2880 HiDPI virtual display is a v2 experiment — quadruples encode cost).
+* **Virtual display:** `CGVirtualDisplay` (private but stable API; used by BetterDisplay/Deskreen). Implement as a ~100-line Objective-C shim exposing a C API (`vd_create`/`vd_destroy`), compiled via `build.rs` + `cc`. Reference implementations to study: `tml1024/FluffyDisplay` (Swift, canonical) and `KhaosT/CGVirtualDisplay` (header dump); recent third-party projects confirm the API still works on current macOS. HiDPI mode: advertise 2560×1440 backed by a 2560×1440 framebuffer in v1 (a 5120×2880 HiDPI virtual display is a v2 experiment — quadruples encode cost).
 * **Capture:** ScreenCaptureKit filtered to the virtual display, `objc2-screen-capture-kit`. Zero-copy IOSurface → VideoToolbox.
 * **Encode:** VideoToolbox with `kVTVideoEncoderSpecification_EnableLowLatencyRateControl`, single reference, `AllowFrameReordering=false`.
 * **Input injection:** `CGEventPost` (needs Accessibility permission — document in README). evdev→CGKeyCode static table lives in `loom-input/src/macos/keymap.rs` and mirrors a table in the spec so the C++ side can test against it.
@@ -259,8 +261,8 @@ Every stage must be instrumented from day one (§12); budgets are verified, not 
 
 | # | Risk | Probe | Fallback |
 |---|---|---|---|
-| R1 | EVDI virtual display under KWin Wayland (hotplug, portal visibility) | M0 spike | Physical-monitor capture; KWin virtual-output API if available |
-| R2 | NVIDIA + PipeWire dmabuf modifiers | M0 spike | SHM capture path (+2–3 ms) |
+| R1 | EVDI virtual display under KWin Wayland (hotplug, portal visibility) | M0 spike — EVDI under KWin: validate hotplug AND compare capture via libevdi direct-grab vs portal ScreenCast of the EVDI output — measure latency consistency, end-to-end delay, and CPU for both | Physical-monitor capture; KWin virtual-output API if available |
+| R2 | NVIDIA + PipeWire dmabuf modifiers (applies only if the portal path is chosen over libevdi direct-grab) | M0 spike | SHM capture path (+2–3 ms) |
 | R3 | msquic Android arm64 build | M0 spike | quiche (C API) as substitute — protocol layer must not leak msquic types |
 | R4 | CGVirtualDisplay private-API breakage on macOS updates | ongoing | Pin known-good macOS versions; BetterDisplay community tracks breakage fast |
 | R5 | MediaCodec low-latency flag ignored / extra frame buffered on some Quest firmware | M3 | `vendor.qti` low-latency keys; measure, don't trust |
