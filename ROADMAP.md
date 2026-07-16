@@ -105,15 +105,42 @@ Spec repo (PROTOCOL.md, PAIRING.md, VECTORS.md, GLOSSARY.md, keymaps, 80 vectors
 
 ---
 
-## M8 — Hardening & 1.0
+## M8 — Host control center
 
-- **M8.1 Soak** — 4-hour sessions on both hosts: no leaks (RSS/GPU-mem flat), no drift (A/V sync, clock filter), no degradation. 
-- **M8.2 Failure-mode sweep** — kill/restart each component mid-session, sleep/wake host and headset, WiFi off/on; every path either recovers or fails with a visible, accurate message.
-- **M8.3 Packaging** — `loomd` as NixOS module + Homebrew formula + plain binary; Quest APK signed for sideload; README quickstarts.
-- **M8.4 Tag v1.0** — spec repo tagged, superrepo pins a certified triple, ARCHITECTURE §13 risks all resolved or explicitly accepted.
+**Goal:** `loomd` becomes a desktop app: an egui window integrated into the daemon process (pure Rust, one codebase for both hosts), with `--headless` preserving today's daemon behavior. The GUI is a *consumer* of loomd's internals — status, settings, stats — never a second implementation of any of them; wire behavior is identical with or without it.
+
+- **M8.1 App shell** [CC][Linux+Mac] — eframe/egui window + menubar/tray presence; start/stop serving; session status (idle/streaming, client name, duration); `--headless` flag. *Accept:* session state-machine tests pass identically GUI and headless; quitting the app mid-session sends BYE and media stops within 100 ms (§1.1).
+- **M8.2 Settings editor** [CC][Linux+Mac] — every `loomd.toml` field editable with validation; the TOML stays the source of truth (GUI reads/writes it); resolution and audio changes mid-session go through §8 reconfiguration. *Accept:* field-for-field parity with `loomd.toml` covered by a test; invalid input rejected at the widget; mid-session resolution change → new CONFIG generation + IDR, client survives.
+- **M8.3 Live dashboard** [CC][Linux+Mac] — STATS-fed graphs (bitrate, e2e latency, loss, jitter, decode time) plus host-side capture/encode timings and a log pane over the existing `tracing` spans. *Accept:* dashboard values match the client overlay within one STATS window; 4 h with the dashboard open, RSS flat.
+- **M8.4 Pairing & devices** [CC][Linux+Mac] — paired-device list from the pin store, revoke, re-arm pairing with the PIN displayed in-GUI (replaces stdout). *Accept:* pair→revoke→re-pair cycle driven entirely from the GUI; a revoked client's next connect is rejected `AUTH_FAILED`.
+
+**Exit criteria:** a session is set up, monitored, and torn down without touching a terminal or editing TOML by hand.
+
+---
+
+## M9 — Multi-window
+
+**Goal:** several desktop windows in the headset at once — each an independent virtual display on the host, streamed as its own video stream, independently movable and resizable in space. This deliberately supersedes the ARCHITECTURE §1 v1 non-goal "multiple simultaneous displays" (§1 is amended in M9.1's spec PR). It is the protocol's first real revision; the extension mechanisms reserved in PROTOCOL §12 — the stream_id space and HELLO feature bits — exist for exactly this.
+
+- **M9.1 Protocol rev: multi-stream** [CC][Mac] — spec PR first, prose + vectors together: a multi-display feature bit (HELLO key 5), CONFIG describing N video streams with per-stream resolution, stream-scoped IDR_REQUEST and STATS, INPUT events carrying a target display, and window create/destroy control messages. Un-negotiated ⇒ exactly today's wire behavior. *Accept:* vector-check green on both impls; a v1 peer against a multi-window peer interoperates single-window, bit-exact.
+- **M9.2 Host fan-out** [HW][Linux+Mac] — N × (virtual display → capture → encode) pipelines; §5.6 pacing per stream; the AIMD bitrate budget split across streams. **Contains spike:** NVENC concurrent-session limits and VideoToolbox multi-session cost, measured at 2×1440p72. *Accept:* 2 displays streamed ≥ 30 min with per-stream encode inside the M1.5 budget; session-limit findings recorded in ARCHITECTURE §13.
+- **M9.3 Quest fan-in** [HW][Quest] — one MediaCodec instance and one cylinder layer per window. **Contains spike (R5's sibling):** how many concurrent 1440p HEVC decode sessions the XR2 Gen 2 sustains and at what per-session latency — measured, cap recorded. *Accept:* 2 windows live at 72 Hz compositor; loss on one window freezes and IDR-recovers only that window.
+- **M9.4 Window management UX** [HW][Quest] — grab-to-move (grip), resize, per-window distance/curvature; add/close windows from the in-headset panel (driving host display create/destroy via M9.1 messages); layout persisted per host pairing. *Accept:* two windows placed, resized, and persisted across a reconnect; closing a window destroys its host display cleanly.
+- **M9.5 Input routing** [HW][Quest+both] — pointer focus follows the ray's target window, keyboard focus follows pointer; all INPUT events carry the target display. *Accept:* the M4.3 typing test passes into each of two windows; clicks at window edges land on the intended window (< 5 px error, per M4.1).
+
+**Exit criteria:** the two-monitor workflow, wireless — code on one window, docs on the other — with loss recovery and input isolated per window.
+
+---
+
+## M10 — Hardening & 1.0
+
+- **M10.1 Soak** — 4-hour sessions on both hosts: no leaks (RSS/GPU-mem flat), no drift (A/V sync, clock filter), no degradation. Run with the control center open and 2 windows streaming — the 1.0 shape, not the M1 shape.
+- **M10.2 Failure-mode sweep** — kill/restart each component mid-session, sleep/wake host and headset, WiFi off/on; every path either recovers or fails with a visible, accurate message (in the GUI too, not just logs).
+- **M10.3 Packaging** — `loomd` as an app bundle (`loomd.app` / `.desktop` + tray) plus NixOS module + Homebrew formula + plain binary; Quest APK signed for sideload; README quickstarts.
+- **M10.4 Tag v1.0** — spec repo tagged, superrepo pins a certified triple, ARCHITECTURE §13 risks all resolved or explicitly accepted.
 
 ---
 
 ## Suggested order & parallelism
 
-M1 → M2 are sequential (M2 reuses M1's client verbatim). M3.0 can run any time after M0. M3 needs M1.2's synthetic source (a host that can stream *something* on demand is the Quest bring-up tool). M4–M6 are largely independent after M3 and can interleave with whatever hardware is on the desk that day; M6.1 (the EVDI spike) is worth doing *early* opportunistically, since its outcome may simplify M1.4/M1.5's successors. M7.1 is pure [CC] and can fill any gap. M8 is strictly last.
+M1 → M2 are sequential (M2 reuses M1's client verbatim). M3.0 can run any time after M0. M3 needs M1.2's synthetic source (a host that can stream *something* on demand is the Quest bring-up tool). M4–M6 are largely independent after M3 and can interleave with whatever hardware is on the desk that day; M6.1 (the EVDI spike) is worth doing *early* opportunistically, since its outcome may simplify M1.4/M1.5's successors. M7.1 is pure [CC] and can fill any gap. M8 (control center) slots after M7 — the dashboard and device management want STATS and pairing mature — though M8.1/M8.2 are [CC] and can start earlier. M9 depends on M4 (input), M6 (virtual displays), and M7 (reconnect); M9.1, being pure spec+[CC], can land opportunistically any time after M6. M10 is strictly last.
