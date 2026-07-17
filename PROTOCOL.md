@@ -167,7 +167,7 @@ Hosts MUST silently drop events they cannot inject; input is best-effort and nev
 
 ### 3.6 IDR_REQUEST (0x20), client → host
 
-Body: `{0: last_good_frame_seq: uint}` — the newest video `frame_seq` the client fully decoded (0 if none). Rate limiting: the client MUST NOT send more than one IDR_REQUEST per **250 ms** and SHOULD suppress further requests while one is outstanding (i.e., until a keyframe with `frame_seq > last_good_frame_seq` arrives). Hosts SHOULD respond with an IDR in the next encoded frame and MAY coalesce multiple requests.
+Body: `{0: last_good_frame_seq: uint}` — the newest video `frame_seq` the client fully decoded (0 if none). Rate limiting: the client MUST NOT send more than one IDR_REQUEST per **250 ms**. While the client still cannot decode — no keyframe with `frame_seq > last_good_frame_seq` has arrived — it SHOULD re-issue the request at that cadence rather than suppress it, so that a lost recovery IDR does not stall recovery permanently. (Media datagrams are unreliable, and a large IDR is itself lossy: suppressing until a keyframe that never arrives would deadlock.) Hosts SHOULD respond with an IDR in the next encoded frame and MAY coalesce multiple requests.
 
 ### 3.7 STATS (0x21), client → host
 

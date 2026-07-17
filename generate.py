@@ -8,7 +8,7 @@ Bytes are hex strings; CBOR byte strings inside JSON bodies are {"$hex": ...}.
 import json, struct, os, cbor2
 from collections import OrderedDict
 
-OUT = "/home/claude/loom-spec/vectors"
+OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vectors")
 
 # ---------------------------------------------------------------- helpers
 def hexs(b): return b.hex()
@@ -172,26 +172,20 @@ class Reasm:
         self.dropped_incomplete = 0
         self.discarded_gap = 0
         self.stale_fragments = 0
-        self.idr_outstanding = False
         self.idr_last_t = None
-        self.idr_last_good_at_request = None
 
     def maybe_idr(self, t):
-        if self.idr_outstanding: return
+        # §3.6: at most one request per 250 ms. The request is re-issued at that
+        # cadence while the client still cannot decode, so a lost recovery IDR
+        # does not stall recovery permanently.
         if self.idr_last_t is not None and t - self.idr_last_t < 250: return
         last_good = self.last_decoded if self.last_decoded is not None else 0
         self.events.append({"t_ms": t, "ev": "idr_request", "last_good": last_good})
-        self.idr_outstanding = True
         self.idr_last_t = t
-        self.idr_last_good_at_request = self.last_decoded
 
     def deliver(self, t, seq, key):
         self.events.append({"t_ms": t, "ev": "deliver", "frame_seq": seq, "keyframe": key})
         self.last_decoded = seq
-        if key and self.idr_outstanding:
-            g = self.idr_last_good_at_request
-            if g is None or seq > g:
-                self.idr_outstanding = False
 
     def frag(self, t, seq, idx, cnt, key):
         if seq <= self.newest_complete:
@@ -244,27 +238,38 @@ def gen_reassembly():
     traces.append(("happy_path", tr))
 
     tr = [d(0, 0, 0, 1, True), d(14, 1, 0, 3), d(15, 1, 2, 3),  # frag 1 of frame 1 lost
-         d(28, 2, 0, 1), d(42, 3, 0, 1),                        # 2 completes with gap -> discard+IDR; 3 too but rate-limited/outstanding
+         d(28, 2, 0, 1), d(42, 3, 0, 1),                        # 2 completes with gap -> discard+IDR; 3 too but rate-limited (<250 ms)
          d(300, 4, 0, 1, True), d(314, 5, 0, 1)]                # host answers with IDR frame 4
     traces.append(("single_loss_idr_recovery", tr))
 
     tr = [d(0, 0, 0, 1, True),
          d(10, 1, 0, 2), d(11, 2, 0, 2), d(12, 3, 0, 2),        # third incomplete evicts frame 1
-         d(13, 2, 1, 2), d(14, 3, 1, 2)]                        # 2 completes (gap->discard+IDR), 3 completes (still gap, outstanding)
+         d(13, 2, 1, 2), d(14, 3, 1, 2)]                        # 2 completes (gap->discard+IDR), 3 completes (still gap, rate-limited)
     traces.append(("window_eviction", tr))
 
     tr = [d(0, 0, 0, 1, True), d(5, 2, 0, 1), d(6, 2, 0, 1),    # dup fragment ignored via set
          d(7, 1, 0, 1),                                          # arrives late but 2 not decoded (gap-discarded), 1 completes: seq==last_decoded+1 -> deliver
-         d(8, 3, 0, 1)]                                          # 3 has gap (2 was discarded) -> discard, idr (rate: first idr at t=5? check)
+         d(8, 3, 0, 1)]                                          # 3 has gap (2 was discarded) -> discard, idr (rate-limited: <250 ms since t=5)
     traces.append(("reorder_and_duplicate", tr))
+
+    # §3.6 retry: a sustained gap with no recovery keyframe re-issues the IDR
+    # request every 250 ms, so a lost recovery IDR does not deadlock recovery.
+    tr = [d(0, 0, 0, 1, True),                                  # keyframe 0 delivered
+         d(14, 2, 0, 1),                                         # gap (1 lost) -> discard + IDR #1
+         d(280, 3, 0, 1),                                        # still gap, >250 ms later -> IDR #2 (retry)
+         d(546, 4, 0, 1, True), d(560, 5, 0, 1)]                # recovery IDR delivered, then resume
+    traces.append(("idr_retry_then_recovery", tr))
 
     tr = [d(0, 0, 0, 1, True), d(10, 1, 0, 2), d(11, 2, 0, 1), d(12, 0xFFFF, 0, 1),
          d(13, 1, 1, 2)]                                         # frame 1 fragment now stale (newest_complete advanced past it? no: 2 discarded-gap sets newest_complete=2 -> 1 stale)
     traces.append(("stale_after_completion", tr))
 
+    # Rate limit + retry: the t=200 gap is <250 ms after the t=14 request so it is
+    # suppressed; the t=600 gap is >250 ms later with no recovery yet, so it
+    # re-issues the request; the t=900 keyframe recovers.
     tr = [d(0, 0, 0, 1, True), d(14, 2, 0, 1), d(200, 3, 0, 1), d(600, 5, 0, 1),
          d(900, 6, 0, 1, True), d(914, 7, 0, 1)]
-    traces.append(("idr_rate_limit_and_clear", tr))
+    traces.append(("idr_rate_limit_and_retry", tr))
 
     cases = []
     for label, tr in traces:
@@ -275,8 +280,9 @@ def gen_reassembly():
                "'stale_fragments' counts fragments dropped by rule 1 or arriving below the "
                "window; 'dropped_incomplete' counts rule-2 evictions and rule-1 cleanup of "
                "incomplete frames; 'discarded_gap' counts completed frames discarded by rule 3. "
-               "IDR requests: >=250ms apart AND none while one is outstanding; outstanding "
-               "clears on delivering a keyframe newer than last_good at request time.")
+               "IDR requests are rate-limited to one per >=250ms and re-issued at that "
+               "cadence while the client cannot decode, so a lost recovery IDR does not "
+               "stall recovery permanently (§3.6).")
 
 # ---------------------------------------------------------------- clocksync
 def gen_clocksync():
@@ -343,11 +349,12 @@ EV2CG = {  # evdev -> CGKeyCode (starter set; verify against Carbon Events.h bef
 }
 
 def gen_keymaps():
-    os.makedirs("/home/claude/loom-spec/keymaps", exist_ok=True)
-    with open("/home/claude/loom-spec/keymaps/akeycode_to_evdev.csv", "w") as f:
+    keymaps_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "keymaps")
+    os.makedirs(keymaps_dir, exist_ok=True)
+    with open(os.path.join(keymaps_dir, "akeycode_to_evdev.csv"), "w") as f:
         f.write("# AKEYCODE,evdev  — starter table, VERIFY against android/keycodes.h + input-event-codes.h\n")
         for k in sorted(AK2EV): f.write(f"{k},{AK2EV[k]}\n")
-    with open("/home/claude/loom-spec/keymaps/evdev_to_cgkeycode.csv", "w") as f:
+    with open(os.path.join(keymaps_dir, "evdev_to_cgkeycode.csv"), "w") as f:
         f.write("# evdev,CGKeyCode  — starter table, VERIFY against Carbon Events.h\n")
         for k in sorted(EV2CG): f.write(f"{k},{EV2CG[k]}\n")
     cases = []
