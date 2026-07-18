@@ -230,9 +230,11 @@ Decode-to-layer path: `AMediaCodec` → `SurfaceTexture` (OES) → one draw call
 
 `DISCOVERING → PAIRING → CONNECTING → NEGOTIATING → STREAMING → (DEGRADED ⇄ STREAMING) → RECONNECTING → …` — reconnect with exponential backoff reusing the pinned cert; the cylinder shows the last frame dimmed with a status chip while reconnecting.
 
-### 6.5 Alternate presentation under evaluation: Spatial SDK client (M3.5)
+### 6.5 Second client: Spatial SDK hybrid (M3.5)
 
-The §6.2 bet — hand the desktop to the compositor as a cylinder layer — buys native-resolution sampling but forfeits sampler control. M3.4 found the resulting **anisotropic minification aliasing** (edge shimmer, worst on the obliquely-viewed top edge) cannot be filtered away through the layer path; super-sampling + mips only reduce it, and resolution-matching trades it for softness. A second, **parallel** Quest client on the **Meta Spatial SDK** renders the desktop into a curved `VideoSurfacePanel` the app controls, which *can* filter anisotropically. It shares `client/core`/`proto` (session, reassembly, transport bridged via JNI; AMediaCodec decodes straight into the panel `Surface`), so only presentation differs. This is an **evaluation, not a replacement**: if it is not decisively sharper-and-cleaner than the OpenXR client at equal angular size, the cylinder-layer design of §6.2 stands. Tracked as ROADMAP M3.5.
+The §6.2 cylinder-layer bet forfeits sampler control, and M3.4 found its anisotropic minification shimmer can't be filtered away through the layer path. `client/quest-spatial` is a second, **parallel** Quest client on the **Meta Spatial SDK** that sidesteps this by letting **Horizon OS composite the desktop as a window**: by default a **2D window in Home** (`com.oculus.intent.category.2D`), with an immersive `AppSystemActivity` mode on demand for a many-monitor workspace (the OS caps Home windows at ~3, so >3 monitors need our own scene). It shares `client/core`/`proto`: a native JNI bridge reuses the OpenXR client's `quic_transport` + `net_session` + `HevcDecoder` **verbatim**, decoding into the window's `ANativeWindow`.
+
+**Finding (M3.5):** the OS window is *not* an anisotropic escape hatch — the Quest samples the video layer with the same filter, so an over-sized stream still shimmers in the window. The fix is the same lever that worked for the cylinder: **resolution matching**, here made **dynamic** (stream = the window's current surface size, re-negotiated on resize) — also how Meta's own Remote Desktop stays sharp. This does not retire §6.2; the two clients coexist (windowed/OS-composited vs immersive/cylinder). Multi-monitor (>3) then layers on **M6** host virtual displays.
 
 ---
 
