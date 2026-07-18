@@ -31,7 +31,7 @@ Loom turns a Meta Quest 3 into a wireless monitor-plus-input-station for a Linux
 
 **Goal:** Stream a *virtual* (headless) desktop display from a Linux or macOS host to a Meta Quest 3 over LAN WiFi, rendered as a curved screen in-headset, with mouse (controller ray) and keyboard (Quest Bluetooth keyboard) input flowing back. Target motion-to-photon comfortable for productivity: text must be readable, cursor latency must feel direct.
 
-**Non-goals for v1:** WAN/relay operation, multiple simultaneous displays, Windows host, microphone passthrough, hand tracking, AV1, Horizon Store distribution, in-headset full settings UI.
+**Non-goals for v1:** WAN/relay operation, Windows host, microphone passthrough, hand tracking, AV1, Horizon Store distribution, in-headset full settings UI. *(Amended in M6.1: **multiple simultaneous displays** is no longer a non-goal — it is specified as an opt-in, negotiated extension within `loom/1`; see PROTOCOL.md §3.4 multi-display and ROADMAP M6. An un-negotiated session is still single-display, bit-for-bit as before.)*
 
 **v1 quality bar:** 2560×1440 @ 72 Hz, HEVC, ≤ 45 ms click-to-photon on a clean WiFi 6 network, ≥ 30 minutes without visible desync or leak-driven degradation.
 

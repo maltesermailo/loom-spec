@@ -40,8 +40,10 @@ def dg_header(magic, flags, stream_id, frame_seq, frag_index, frag_count):
 def dg_encode(flags, stream_id, frame_seq, frag_index, frag_count, payload=b""):
     return dg_header(MAGIC, flags, stream_id, frame_seq, frag_index, frag_count) + payload
 
-def dg_decode(b):
-    """Reference decoder per PROTOCOL.md §4. Returns (ok, header|reason)."""
+def dg_decode(b, extra_video_streams=()):
+    """Reference decoder per PROTOCOL.md §4. `extra_video_streams` are the video
+    stream_ids >= 2 negotiated via CONFIG key 6 (§3.4 multi-display); absent = the
+    v1 default set {0 video, 1 audio}. Returns (ok, header|reason)."""
     if len(b) < 12: return False, "too_short"
     if len(b) > 1350: return False, "oversize"
     magic, flags, stream_id, frame_seq, frag_index, frag_count = struct.unpack(">BBHIHH", b[:12])
@@ -50,7 +52,8 @@ def dg_decode(b):
     if frag_index >= frag_count: return False, "frag_index_range"
     last = bool(flags & F_LAST)
     if last != (frag_index == frag_count - 1): return False, "last_fragment_mismatch"
-    if stream_id not in (0, 1): return False, "unknown_stream"  # drop, not violation
+    if stream_id not in (0, 1) and stream_id not in extra_video_streams:
+        return False, "unknown_stream"  # un-negotiated stream: drop, not violation
     return True, {"flags_keyframe": bool(flags & F_KEY), "flags_last": last,
                   "stream_id": stream_id, "frame_seq": frame_seq,
                   "frag_index": frag_index, "frag_count": frag_count,
@@ -73,26 +76,38 @@ def gen_datagram():
                               "payload": hexs(pl)},
                     "expected": {"hex": hexs(b)}})
     dec = []
-    for b, label in [
-        (dg_encode(F_KEY | F_LAST, 0, 5, 0, 1, b"\x01\x02"), "valid_roundtrip"),
-        (b"\x4d" + dg_encode(F_LAST, 0, 0, 0, 1)[1:], "bad_magic"),
-        (dg_header(MAGIC, F_LAST, 0, 0, 0, 0), "frag_count_zero"),
-        (dg_header(MAGIC, F_LAST, 0, 0, 3, 3), "frag_index_range"),
-        (dg_header(MAGIC, 0, 0, 0, 2, 3), "last_flag_missing_on_last"),          # idx2 of 3, no LAST
-        (dg_header(MAGIC, F_LAST, 0, 0, 0, 3), "last_flag_set_on_nonlast"),
-        (dg_header(MAGIC, F_LAST, 9, 0, 0, 1), "unknown_stream_id"),
-        (dg_encode(F_LAST, 0, 0, 0, 1, b"\x00" * 1339), "oversize_1351"),
-        (b"\x4c\x03\x00", "truncated"),
-        (dg_encode(F_KEY | F_LAST | 0xFC, 0, 1, 0, 1, b"\xee"), "reserved_flags_ignored"),
+    # Each case is (bytes, label, extra_video_streams); extra is empty for the
+    # v1 cases, so their `input` is byte-identical to before (no extra key).
+    for b, label, extra in [
+        (dg_encode(F_KEY | F_LAST, 0, 5, 0, 1, b"\x01\x02"), "valid_roundtrip", ()),
+        (b"\x4d" + dg_encode(F_LAST, 0, 0, 0, 1)[1:], "bad_magic", ()),
+        (dg_header(MAGIC, F_LAST, 0, 0, 0, 0), "frag_count_zero", ()),
+        (dg_header(MAGIC, F_LAST, 0, 0, 3, 3), "frag_index_range", ()),
+        (dg_header(MAGIC, 0, 0, 0, 2, 3), "last_flag_missing_on_last", ()),        # idx2 of 3, no LAST
+        (dg_header(MAGIC, F_LAST, 0, 0, 0, 3), "last_flag_set_on_nonlast", ()),
+        (dg_header(MAGIC, F_LAST, 9, 0, 0, 1), "unknown_stream_id", ()),
+        (dg_encode(F_LAST, 0, 0, 0, 1, b"\x00" * 1339), "oversize_1351", ()),
+        (b"\x4c\x03\x00", "truncated", ()),
+        (dg_encode(F_KEY | F_LAST | 0xFC, 0, 1, 0, 1, b"\xee"), "reserved_flags_ignored", ()),
+        # multi-display (§3.4): a negotiated video stream_id >= 2 decodes; the same
+        # stream_id when NOT negotiated is dropped, exactly as an un-negotiated
+        # stream must be. `extra_video_streams` mirrors CONFIG key 6.
+        (dg_encode(F_KEY | F_LAST, 2, 3, 0, 1, b"\xdd" * 16), "multidisplay_stream2_negotiated", (2, 3)),
+        (dg_encode(F_LAST, 2, 0, 0, 1, b"\x22" * 8), "stream2_unnegotiated_dropped", ()),
     ]:
-        ok, r = dg_decode(bytes(b))
+        ok, r = dg_decode(bytes(b), extra)
+        inp = {"hex": hexs(bytes(b))}
+        if extra:
+            inp["extra_video_streams"] = list(extra)
         # reserved-flags case: receiver MUST ignore reserved bits -> decodes fine
-        dec.append({"label": label, "op": "decode", "input": {"hex": hexs(bytes(b))},
+        dec.append({"label": label, "op": "decode", "input": inp,
                     "expected": ({"ok": True, "header": r} if ok else {"ok": False, "reason": r})})
     write("datagram", "header", enc + dec,
           note="§4. Reserved flag bits are sender-MUST-zero / receiver-MUST-ignore; "
                "decode of reserved bits set therefore succeeds. unknown_stream/oversize/"
-               "bad_magic etc. are silent drops, never PROTOCOL_VIOLATION.")
+               "bad_magic etc. are silent drops, never PROTOCOL_VIOLATION. "
+               "`extra_video_streams` (when present) are the negotiated multi-display "
+               "video stream_ids >= 2 (§3.4 CONFIG key 6); absent = the v1 set {0,1}.")
 
 # ---------------------------------------------------------------- control
 def frame(msg_type, body):
@@ -120,6 +135,16 @@ def gen_control():
         ("pair_b", 0x51, {0: bytes([0xB0]) + bytes(31), 1: bytes([0xC0]) + bytes(31)}),
         ("pair_c", 0x52, {0: bytes([0xC1]) + bytes(31)}),
         ("pair_result", 0x53, {0: True, 1: 2}),
+        # multi-display (§3.4–§3.7). HELLO key 5 = 3 (audio | multi-display fan-in);
+        # WELCOME key 3 = 2 (multi-display active); CONFIG key 6 lists the extra
+        # video streams; IDR_REQUEST/STATS/INPUT carry a stream_id / target.
+        ("hello_multidisplay", 0x01, {0: 1, 1: "Quest 3", 2: [1, 2], 3: [3072, 3216], 4: 90, 5: 3}),
+        ("welcome_multidisplay", 0x02, {0: 1, 1: "studio", 2: bytes(range(16)), 3: 2}),
+        ("config_multistream", 0x03, {0: 2, 1: 1, 2: [2560, 1440], 3: 72, 4: 1, 5: 60000,
+                                      6: [{0: 2, 1: [2560, 1440], 2: 72, 3: 60000}]}),
+        ("idr_request_stream", 0x20, {0: 1041, 1: 2}),
+        ("stats_stream", 0x21, {0: 72, 1: 1, 2: 3110, 3: 2.5, 4: 5400, 5: 6200, 6: 31000, 7: 2}),
+        ("input_targeted", 0x10, {0: [[0, 32768, 21845], [1, 0, True]], 1: 1}),
     ]
     for label, t, body in msgs:
         f = frame(t, body)

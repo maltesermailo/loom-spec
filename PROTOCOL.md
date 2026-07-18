@@ -21,7 +21,7 @@ The key words MUST, MUST NOT, SHOULD, SHOULD NOT, and MAY are to be interpreted 
 
 **Why the control channel is CBOR with integer keys.** Binary (input events flow at up to 200 Hz), self-describing (unknown fields skippable — the forward-compatibility rules of §3.2 depend on this), canonical form available (byte-exact conformance vectors need one true encoding), and trivially implementable in both Rust and C++ without a schema compiler in the build.
 
-**What is deliberately absent from v1** — each with its designated path in: FEC (header flag bit reserved, §4), sliced/overlapped encoding (fragment framing already supports it, §5.5), more streams such as a cursor plane or second display (stream_id space + feature bits, §12), AV1 (codec negotiation, §3.4), and WAN operation (out of scope entirely; the trust model in PAIRING.md is LAN-shaped).
+**What is deliberately absent from v1** — each with its designated path in: FEC (header flag bit reserved, §4), sliced/overlapped encoding (fragment framing already supports it, §5.5), a cursor plane (stream_id space + feature bits, §12; the second-display case is now specified via those same mechanisms — multi-display, §3.4), AV1 (codec negotiation, §3.4), and WAN operation (out of scope entirely; the trust model in PAIRING.md is LAN-shaped).
 
 ---
 
@@ -32,10 +32,10 @@ Loom streams a virtual desktop (video + audio) from a **host** to a **client** a
 | Channel | QUIC mechanism | Reliability | Direction |
 |---|---|---|---|
 | Control | Bidirectional stream (the first one opened by the client) | Reliable, ordered | Both |
-| Video | Datagrams, `stream_id = 0` | Unreliable, unordered | Host → Client |
+| Video | Datagrams, `stream_id = 0` (primary display), `≥ 2` (additional displays, §3.4) | Unreliable, unordered | Host → Client |
 | Audio | Datagrams, `stream_id = 1` | Unreliable, unordered | Host → Client |
 
-There is exactly one control stream per connection. Additional QUIC streams MUST NOT be opened in protocol version 1; a peer receiving one MUST close the connection with `PROTOCOL_VIOLATION` (§10).
+Additional video streams (`stream_id ≥ 2`) exist only when the **multi-display** feature is negotiated (§3.4, HELLO key 5 / WELCOME key 3); an un-negotiated session uses `stream_id 0` and `1` only, exactly as a `loom/1` peer that predates this feature. There is exactly one control stream per connection. Additional QUIC streams MUST NOT be opened in protocol version 1; a peer receiving one MUST close the connection with `PROTOCOL_VIOLATION` (§10).
 
 ### 1.1 Roles and session lifecycle
 
@@ -126,7 +126,7 @@ Body maps use **integer keys**. Receivers MUST ignore unknown keys in any body m
 | 2 | array of uint | supported video codecs, preference-ordered: 1 = HEVC, 2 = AV1. (0 reserved for H.264.) |
 | 3 | array [uint,uint] | max decodable width, height |
 | 4 | uint | max refresh rate (Hz) |
-| 5 | uint | feature bitmask: bit 0 = audio playback supported. Bits 1+ reserved, MUST be 0 in v1 and ignored on receipt. |
+| 5 | uint | feature bitmask: bit 0 = audio playback supported; bit 1 = **multi-display fan-in** (client can receive, decode, and display concurrent video streams, §4). Bits 2+ reserved, MUST be 0 and ignored on receipt. |
 
 **WELCOME (0x02), host → client.**
 
@@ -135,6 +135,7 @@ Body maps use **integer keys**. Receivers MUST ignore unknown keys in any body m
 | 0 | uint | chosen `protocol_version` (MUST equal 1) |
 | 1 | tstr | host name |
 | 2 | bstr (16) | session id (random; for logs/UI, no protocol semantics) |
+| 3 | uint | **active feature bitmask** (optional; absent ⇒ 0). The features the host enables for this session — the intersection of the client's HELLO key 5 and the host's own support. bit 1 = multi-display active (the host may send CONFIG key 6 and video `stream_id`s ≥ 2). A client MUST treat an absent key 3 as 0 (no optional features). |
 
 **CONFIG (0x03), host → client.** Describes the media the host will send. Also used mid-session for reconfiguration (§8).
 
@@ -146,6 +147,9 @@ Body maps use **integer keys**. Receivers MUST ignore unknown keys in any body m
 | 3 | uint | refresh rate (Hz) |
 | 4 | uint | audio: 0 = disabled, 1 = Opus 48 kHz stereo, 10 ms frames |
 | 5 | uint | initial video bitrate, kbit/s (informative) |
+| 6 | array of maps | **additional video streams** (optional; present only when multi-display is active, WELCOME key 3 bit 1). One descriptor per extra display, each `{0: stream_id (uint ≥ 2, unique per CONFIG), 1: [width, height], 2: refresh (Hz), 3: bitrate (kbit/s, informative)}`. |
+
+Keys 1–5 describe the **primary** video stream (`stream_id 0`) and the session audio; the video codec (key 1) is shared by every video stream. Key 6 describes the other displays. The generation/ACK gate (§8) covers all streams of a CONFIG **atomically**: the client ACKs the one generation and the host switches every stream together (each stream's next frame an IDR with its own parameter sets).
 
 **CONFIG_ACK (0x04), client → host.** Body: `{0: generation}`. The host MUST NOT send media for a generation before its ACK.
 
@@ -153,7 +157,7 @@ Body maps use **integer keys**. Receivers MUST ignore unknown keys in any body m
 
 ### 3.5 INPUT (0x10), client → host
 
-Body: `{0: events}` where `events` is a CBOR array of event arrays. The client SHOULD coalesce and send at most one INPUT message per 5 ms (≈ 200 Hz) and MUST preserve event order within and across messages.
+Body: `{0: events, 1: target}` where `events` is a CBOR array of event arrays and `target` (optional uint, default 0) is the video `stream_id` — the display — the events are aimed at (multi-display, §3.4). Pointer coordinates normalize to *that* display. In a single-stream session `target` is absent/0. The client SHOULD coalesce and send at most one INPUT message per 5 ms (≈ 200 Hz) and MUST preserve event order within and across messages. (Per-window focus routing is specified here; hosts that stream a single display MAY ignore `target`.)
 
 Each event is `[ev_type: uint, ...fields]`:
 
@@ -168,7 +172,7 @@ Hosts MUST silently drop events they cannot inject; input is best-effort and nev
 
 ### 3.6 IDR_REQUEST (0x20), client → host
 
-Body: `{0: last_good_frame_seq: uint}` — the newest video `frame_seq` the client fully decoded (0 if none). Rate limiting: the client MUST NOT send more than one IDR_REQUEST per **250 ms**. While the client still cannot decode — no keyframe with `frame_seq > last_good_frame_seq` has arrived — it SHOULD re-issue the request at that cadence rather than suppress it, so that a lost recovery IDR does not stall recovery permanently. (Media datagrams are unreliable, and a large IDR is itself lossy: suppressing until a keyframe that never arrives would deadlock.) Hosts SHOULD respond with an IDR in the next encoded frame and MAY coalesce multiple requests.
+Body: `{0: last_good_frame_seq: uint, 1: stream_id: uint}` — `stream_id` (optional, default 0) selects which video stream to refresh (multi-display, §3.4), and `last_good_frame_seq` is that stream's newest fully-decoded `frame_seq` (0 if none). Rate limiting: the client MUST NOT send more than one IDR_REQUEST **per stream** per **250 ms**. While the client still cannot decode — no keyframe with `frame_seq > last_good_frame_seq` has arrived — it SHOULD re-issue the request at that cadence rather than suppress it, so that a lost recovery IDR does not stall recovery permanently. (Media datagrams are unreliable, and a large IDR is itself lossy: suppressing until a keyframe that never arrives would deadlock.) Hosts SHOULD respond with an IDR in the next encoded frame and MAY coalesce multiple requests.
 
 ### 3.7 STATS (0x21), client → host
 
@@ -183,6 +187,7 @@ Sent every 1000 ms ± 100 ms during streaming. All values cover the window since
 | 4 | uint | mean decode time, µs |
 | 5 | uint | current RTT estimate, µs (from §7) |
 | 6 | uint | mean end-to-end video latency, µs (capture ts → layer submit, using §7 offset) |
+| 7 | uint | video `stream_id` these counters describe (optional, default 0). With multiple video streams the client sends one STATS per stream; connection-level values (keys 3, 5 — jitter, RTT) may repeat across them. |
 
 The host's bitrate controller consumes STATS (see §9, informative).
 
@@ -212,7 +217,10 @@ offset  size  field
                         bit 1: LAST_FRAGMENT
                         bits 2–7: reserved — sender MUST zero, receiver MUST ignore
                         (bit 2 is earmarked for a future FEC scheme)
-2       2     stream_id 0 = video, 1 = audio. Unknown stream_ids MUST be dropped silently.
+2       2     stream_id 0 = video (primary display), 1 = audio, ≥ 2 = additional
+                        video displays negotiated via CONFIG key 6 (§3.4). A stream_id
+                        that is neither 0, 1, nor a negotiated video stream MUST be
+                        dropped silently (an un-negotiated stream reduces to this case).
 4       4     frame_seq per-stream counter, starts at 0, +1 per frame. MUST NOT wrap
                         (a session is bounded far below 2^32 frames).
 8       2     frag_index 0-based
@@ -223,9 +231,9 @@ offset  size  field
 
 Header + payload MUST NOT exceed 1350 bytes (§2). `LAST_FRAGMENT` MUST be set iff `frag_index == frag_count − 1` (it is redundant but cheap to validate; mismatch ⇒ drop the datagram).
 
-### 4.1 Video payload (`stream_id = 0`)
+### 4.1 Video payload (`stream_id = 0`, or a negotiated `stream_id ≥ 2`)
 
-The logical frame body is:
+Every video stream — the primary and each additional display — carries this same body and its own independent `frame_seq` counter (starting at 0). The logical frame body is:
 
 ```
 u64  capture_ts   host clock, µs (§1.2)
@@ -271,6 +279,7 @@ Per video frame_seq the client reassembles fragments into a frame body. Rules:
 4. **Latency policy.** Completed frames are delivered to the decoder immediately — there is no video jitter buffer in v1. Display pacing is the compositor's job (the layer simply shows the newest decoded image).
 5. **Audio.** Opus frames are placed into an adaptive jitter buffer with an initial target of 30 ms. Missing frames at playout time are concealed (decoder PLC). Frames arriving with `capture_ts` older than the playout point are dropped.
 6. A datagram failing any validation rule in §4 is dropped silently; malformed **control** frames are `PROTOCOL_VIOLATION`.
+7. **Multiple video streams.** When multi-display is negotiated (§3.4), rules 1–4 apply **independently per video `stream_id`**: each stream keeps its own reassembly window, `newest_complete`/`last_decoded` state, decode gate, and IDR_REQUEST cadence, and recovers on its own. Audio (`stream_id 1`) is unchanged. A client MUST NOT let one stream's loss or IDR_REQUEST affect another's.
 
 ---
 
@@ -338,8 +347,8 @@ A conforming implementation passes all vectors bit-exactly. New wire behavior MU
 
 ## 12. Extensibility Rules (how version 2 happens without breaking version 1)
 
-* New control message types: allowed within version 1 — receivers already ignore unknown types. Anything a sender must *rely on* requires a feature bit in HELLO key 5 / a WELCOME echo (to be defined when first needed).
-* New body-map keys: allowed anytime (ignored-unknown-keys rule).
+* New control message types: allowed within version 1 — receivers already ignore unknown types. Anything a sender must *rely on* requires a feature bit in HELLO key 5 / a WELCOME echo. **The WELCOME echo is now realized as WELCOME key 3** (§3.4), first used by multi-display.
+* New body-map keys: allowed anytime (ignored-unknown-keys rule). Multi-display uses this for CONFIG key 6, IDR_REQUEST key 1, STATS key 7, and INPUT key 1.
 * Datagram header layout, framing, and flag bit 0–1 semantics: frozen for `loom/1`. New flag bits (e.g. FEC, bit 2) require a HELLO feature negotiation before use.
-* New stream_ids (cursor plane, second display): require feature negotiation; un-negotiated stream_ids are already safely dropped.
+* New stream_ids (cursor plane, second display): require feature negotiation; un-negotiated stream_ids are already safely dropped. **Multi-display (M6.1) is the first use:** HELLO key 5 bit 1 negotiates it, WELCOME key 3 echoes the active set, and video `stream_id`s ≥ 2 (enumerated in CONFIG key 6) carry the extra displays. This stays within `loom/1` — an un-negotiated peer sees `stream_id 0`/`1` only, bit-for-bit as before.
 * Anything that cannot be done under these rules is `loom/2` (new ALPN).

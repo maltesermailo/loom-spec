@@ -1,7 +1,7 @@
 {
  "category": "datagram",
  "name": "header",
- "note": "\u00a74. Reserved flag bits are sender-MUST-zero / receiver-MUST-ignore; decode of reserved bits set therefore succeeds. unknown_stream/oversize/bad_magic etc. are silent drops, never PROTOCOL_VIOLATION.",
+ "note": "\u00a74. Reserved flag bits are sender-MUST-zero / receiver-MUST-ignore; decode of reserved bits set therefore succeeds. unknown_stream/oversize/bad_magic etc. are silent drops, never PROTOCOL_VIOLATION. `extra_video_streams` (when present) are the negotiated multi-display video stream_ids >= 2 (\u00a73.4 CONFIG key 6); absent = the v1 set {0,1}.",
  "cases": [
   {
    "label": "single_fragment_keyframe",
@@ -217,6 +217,40 @@
      "frag_count": 1,
      "payload_len": 1
     }
+   }
+  },
+  {
+   "label": "multidisplay_stream2_negotiated",
+   "op": "decode",
+   "input": {
+    "hex": "4c0300020000000300000001dddddddddddddddddddddddddddddddd",
+    "extra_video_streams": [
+     2,
+     3
+    ]
+   },
+   "expected": {
+    "ok": true,
+    "header": {
+     "flags_keyframe": true,
+     "flags_last": true,
+     "stream_id": 2,
+     "frame_seq": 3,
+     "frag_index": 0,
+     "frag_count": 1,
+     "payload_len": 16
+    }
+   }
+  },
+  {
+   "label": "stream2_unnegotiated_dropped",
+   "op": "decode",
+   "input": {
+    "hex": "4c02000200000000000000012222222222222222"
+   },
+   "expected": {
+    "ok": false,
+    "reason": "unknown_stream"
    }
   }
  ]
