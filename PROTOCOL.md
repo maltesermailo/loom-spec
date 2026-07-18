@@ -108,6 +108,7 @@ Body maps use **integer keys**. Receivers MUST ignore unknown keys in any body m
 | 0x10 | INPUT | C→H | streaming |
 | 0x20 | IDR_REQUEST | C→H | streaming |
 | 0x21 | STATS | C→H | streaming |
+| 0x22 | VIEWPORT | C→H | streaming |
 | 0x30 | CLOCK_PING | C→H | any |
 | 0x31 | CLOCK_PONG | H→C | any |
 | 0x40 | ERROR | both | any |
@@ -193,6 +194,10 @@ The host's bitrate controller consumes STATS (see §9, informative).
 ### 3.9 ERROR (0x40) and BYE (0x41)
 
 **ERROR** body: `{0: code (uint, §10), 1: detail (tstr, optional, human-readable)}`. Fatal errors are followed by connection close with the same code. **BYE** body: `{0: reason (uint: 0 user, 1 shutdown, 2 idle)}`. Receiver of BYE MUST NOT treat it as an error; reconnection policy is client-local.
+
+### 3.10 VIEWPORT (0x22), client → host
+
+Body: `{0: [width: uint, height: uint]}` — the client's current display size for the desktop, in pixels. A **best-effort request** to stream at this resolution, so the decoded video maps ~1:1 to the client's window/layer and the compositor neither over- nor under-samples it (minification of an over-sized stream is a source of edge shimmer). The host SHOULD honor it by reconfiguring (§8) to the requested size **clamped** to its own capabilities and to the client's HELLO `max_width`/`max_height`; it MAY ignore it, in which case the current generation continues and the client still displays — just not pixel-matched. Sent when the client's display size is first established and whenever the user changes it; a client MUST NOT send more than one VIEWPORT per **250 ms**. A `loom/1` host predating this message ignores the unknown type safely (§12).
 
 ---
 
@@ -285,6 +290,8 @@ All arithmetic is signed 64-bit microseconds; the division rounds toward negativ
 ## 8. Mid-session Reconfiguration
 
 The host MAY send a new CONFIG (incremented generation) at any time — e.g. resolution change, audio toggle, codec switch after a future AV1 upgrade. Sequence: host sends CONFIG → continues the *old* generation's media until CONFIG_ACK arrives → switches: next video frame is an IDR carrying new parameter sets, `frame_seq` continues (does not reset). Clients MUST reinitialize decoders on the parameter change signalled by the IDR of the new generation. Audio reconfiguration follows the same ACK gate.
+
+A client MAY *prompt* a resolution reconfiguration by sending VIEWPORT (§3.10) with its current display size; the host stays the sole issuer of CONFIG and decides whether and how to honor it. This is how a windowed client keeps the stream pixel-matched to its window without over-sampling.
 
 ---
 

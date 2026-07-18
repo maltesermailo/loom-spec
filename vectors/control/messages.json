@@ -326,6 +326,39 @@
    }
   },
   {
+   "label": "viewport",
+   "op": "encode",
+   "input": {
+    "msg_type": 34,
+    "body": {
+     "0": [
+      1600,
+      900
+     ]
+    }
+   },
+   "expected": {
+    "hex": "0000000c821822a10082190640190384"
+   }
+  },
+  {
+   "label": "viewport_decode",
+   "op": "decode",
+   "input": {
+    "hex": "0000000c821822a10082190640190384"
+   },
+   "expected": {
+    "ok": true,
+    "msg_type": 34,
+    "body": {
+     "0": [
+      1600,
+      900
+     ]
+    }
+   }
+  },
+  {
    "label": "clock_ping",
    "op": "encode",
    "input": {
