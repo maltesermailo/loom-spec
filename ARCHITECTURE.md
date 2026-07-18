@@ -216,7 +216,7 @@ The desktop is **not** rendered into the eye buffers. Each frame the client subm
 
 1. `XrCompositionLayerProjection` — the world layer: a minimal environment (void + floor grid + the settings panel when open). This is all the app draws itself.
 2. `XrCompositionLayerCylinderKHR` — the desktop. Its swapchain images are where decoded video lands; the Quest compositor samples them at display resolution with proper filtering, which is what makes text readable. Default geometry: radius 1.8 m, central angle ≈ 55° (≈ matches 16:9 at that radius), centered 1.0 m below-forward of recenter pose; user-adjustable size/distance/curvature persisted on the client.
-3. Enable `XR_FB_composition_layer_settings` sharpening on the cylinder layer (quality win for text, one flag).
+3. Enable `XR_FB_composition_layer_settings` on the cylinder layer: **quality super-sampling and sharpening**. Super-sampling is the load-bearing win — it anti-aliases the desktop, which the compositor minifies onto the cylinder; sharpening is a smaller edge boost. Pair it with a **mipmapped cylinder swapchain** (regenerate mips per blit) so minification is trilinear-filtered. **Known limit (M3.4):** the composition-layer path cannot reach *anisotropic* filtering — the runtime owns the sampler — so at a compact angular size text trades off against edge shimmer: sharp-but-shimmery when over-sampled, clean-but-soft when resolution-matched (swapchain sized ~1:1 to the display pixels the cylinder spans). Resolving both at once needs app-side rendering; see §6.5.
 
 Decode-to-layer path: `AMediaCodec` → `SurfaceTexture` (OES) → one draw call blitting into the cylinder layer's swapchain image per new video frame (skip when no new frame — the compositor re-samples the last image for free, so head motion stays at 72 Hz even if the stream hiccups). A fence/`updateTexImage` handshake per frame; get the threading right (decoder callback thread vs render thread) — this is the fiddliest 200 lines of the client.
 
@@ -229,6 +229,10 @@ Decode-to-layer path: `AMediaCodec` → `SurfaceTexture` (OES) → one draw call
 ### 6.4 Session state machine (shared with SDL client, lives in `client/core`)
 
 `DISCOVERING → PAIRING → CONNECTING → NEGOTIATING → STREAMING → (DEGRADED ⇄ STREAMING) → RECONNECTING → …` — reconnect with exponential backoff reusing the pinned cert; the cylinder shows the last frame dimmed with a status chip while reconnecting.
+
+### 6.5 Alternate presentation under evaluation: Spatial SDK client (M3.5)
+
+The §6.2 bet — hand the desktop to the compositor as a cylinder layer — buys native-resolution sampling but forfeits sampler control. M3.4 found the resulting **anisotropic minification aliasing** (edge shimmer, worst on the obliquely-viewed top edge) cannot be filtered away through the layer path; super-sampling + mips only reduce it, and resolution-matching trades it for softness. A second, **parallel** Quest client on the **Meta Spatial SDK** renders the desktop into a curved `VideoSurfacePanel` the app controls, which *can* filter anisotropically. It shares `client/core`/`proto` (session, reassembly, transport bridged via JNI; AMediaCodec decodes straight into the panel `Surface`), so only presentation differs. This is an **evaluation, not a replacement**: if it is not decisively sharper-and-cleaner than the OpenXR client at equal angular size, the cylinder-layer design of §6.2 stands. Tracked as ROADMAP M3.5.
 
 ---
 
